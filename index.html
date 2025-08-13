@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Expense Manager (PWA)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.json">
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js').then(function(reg){
+        console.log('Service worker registered!', reg);
+      }).catch(function(err){
+        console.log('Service worker registration failed:', err);
+      });
+    }
+  </script>
+  <!-- jQuery -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <!-- Bootstrap 5 JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Roboto', Arial, sans-serif; background: #f4f6f8; color: #222; }
+    .card { border-radius: 1rem; margin-bottom: 1.5rem; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    .table th, .table td { vertical-align: middle !important; }
+    .form-label { font-weight: 500; }
+    .budget-alert { color: #d63838; font-weight: bold; }
+    .chart-box { background: #fff; border-radius: 1rem; padding: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    .nav-tabs .nav-link.active { font-weight: bold; }
+    .tab-section { display: none; }
+    .tab-section.active { display: block; animation: fadeIn 0.4s;}
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @media (min-width:900px) {
+      #chartContainer { max-width: 90vw !important; height: 60vh !important; }
+      #categoryChart { height: 60vh !important; max-height: none !important; }
+    }
+    .btn[disabled] { pointer-events: none; }
+    .dark-mode { background: #23272f !important; color: #eee !important; }
+    .dark-mode .card, .dark-mode .chart-box { background: #2a2c39 !important; color: #eee !important; }
+    .dark-mode .table { color: #eee !important; }
+    .dark-mode .table thead { background: #23272f !important; color: #7fb3e9 !important; }
+    .dark-mode .budget-alert { color: #ff7b7b !important; }
+    .analytics-suggestion { background: #e7f5e6; border-radius: 8px; padding: 1em; margin-bottom: 1em; font-size: 1.05em; }
+    .analytics-suggestion b { color: #237e2c; }
+    .analytics-suggestion .bi { color: #237e2c; }
+    .analytics-title { font-weight: bold; color: #237e2c; }
+    .fullscreen-chart {
+      position: fixed !important;
+      top: 0; left: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      background: #fff;
+      z-index: 9999;
+      box-shadow: 0 0 24px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container py-3">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="fw-bold text-primary">Expense Manager</h2>
+      <button id="toggle-dark" class="btn btn-sm btn-outline-dark"><i class="bi bi-moon-stars-fill"></i></button>
+    </div>
+
+    <!-- Section Tabs -->
+    <ul class="nav nav-tabs mb-3" id="mainTabs">
+      <li class="nav-item"><a class="nav-link active" data-tab="expense-list" href="#">Expenses</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="add-expense" href="#">Add Expense</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="budgets" href="#">Budgets</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="balance" href="#">Balance</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="chart" href="#">Charts</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="analytics" href="#">Analytics</a></li>
+      <li class="nav-item"><a class="nav-link" data-tab="backup" href="#">Backup & Restore</a></li>
+    </ul>
+
+    <!-- Expenses Section -->
+    <div class="tab-section active" id="expense-list">
+      <div class="card card-body mb-3">
+        <form class="row g-2 align-items-end mb-2">
+          <div class="col-md-3 col-6">
+            <input type="text" id="search" class="form-control" placeholder="Search description...">
+          </div>
+          <div class="col-md-3 col-6">
+            <select id="filter-category" class="form-select"></select>
+          </div>
+          <div class="col-md-2 col-6">
+            <input type="date" id="filter-date-start" class="form-control">
+          </div>
+          <div class="col-md-2 col-6">
+            <input type="date" id="filter-date-end" class="form-control">
+          </div>
+          <div class="col-md-2 col-12 d-grid">
+            <button type="button" id="clear-filter" class="btn btn-outline-secondary"><i class="bi bi-x-circle"></i> Clear</button>
+          </div>
+        </form>
+        <div class="budget-alert mt-2" id="budget-alert"></div>
+        <div class="summary mt-2" id="summary"></div>
+        <div class="table-responsive mt-3">
+          <table class="table table-hover align-middle" id="expenses-table">
+            <thead class="table-light">
+              <tr>
+                <th>Date</th>
+                <th>Amount (₹)</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th>Notes</th>
+                <th>Recurring</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="d-flex gap-2 mt-2">
+          <button id="export-btn" class="btn btn-success flex-fill"><i class="bi bi-file-earmark-arrow-down"></i> Export CSV</button>
+          <button id="clear-btn" class="btn btn-danger flex-fill"><i class="bi bi-trash"></i> Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Expense Section -->
+    <div class="tab-section" id="add-expense">
+      <div class="card card-body mb-3">
+        <form id="expense-form" class="row g-2 align-items-end">
+          <input type="hidden" id="expense-id">
+          <div class="col-sm-6 col-12">
+            <label for="date" class="form-label">Date</label>
+            <input type="date" id="date" class="form-control" required>
+          </div>
+          <div class="col-sm-6 col-12">
+            <label for="amount" class="form-label">Amount</label>
+            <input type="number" id="amount" class="form-control" placeholder="₹" min="0" step="0.01" required>
+          </div>
+          <div class="col-sm-6 col-12">
+            <label for="description" class="form-label">Description</label>
+            <input type="text" id="description" class="form-control" maxlength="32" required>
+          </div>
+          <div class="col-sm-6 col-12">
+            <label for="category" class="form-label">Category</label>
+            <select id="category" class="form-select" required></select>
+          </div>
+          <div class="col-12">
+            <label for="notes" class="form-label">Notes</label>
+            <textarea id="notes" class="form-control" rows="2" placeholder="Optional"></textarea>
+          </div>
+          <div class="col-12 form-check mb-2">
+            <input type="checkbox" class="form-check-input" id="recurring">
+            <label class="form-check-label" for="recurring">Recurring (monthly)</label>
+          </div>
+          <div class="col-12 d-grid">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-plus-circle"></i> Add Expense</button>
+          </div>
+        </form>
+        <div id="category-form" class="row g-2 align-items-end mt-2">
+          <div class="col-7 col-md-8">
+            <input type="text" id="new-category" class="form-control" placeholder="Add new category">
+          </div>
+          <div class="col-5 col-md-4">
+            <select id="delete-category" class="form-select"></select>
+          </div>
+          <div class="col-6 d-grid">
+            <button id="add-cat-btn" type="button" class="btn btn-outline-primary"><i class="bi bi-plus"></i> Add Category</button>
+          </div>
+          <div class="col-6 d-grid">
+            <button id="del-cat-btn" type="button" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Delete Category</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Budgets Section -->
+    <div class="tab-section" id="budgets">
+      <div class="card card-body mb-3">
+        <form id="budget-form" class="row g-2 align-items-end mb-2">
+          <div class="col-7 col-md-8">
+            <label for="budget-category" class="form-label">Set Budget</label>
+            <select id="budget-category" class="form-select"></select>
+          </div>
+          <div class="col-5 col-md-4">
+            <input type="number" step="0.01" min="0" id="budget-amount" class="form-control" placeholder="₹ Amount">
+          </div>
+          <div class="col-12 d-grid">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-flag"></i> Set Budget</button>
+          </div>
+        </form>
+        <div id="budget-list" class="row g-2"></div>
+      </div>
+    </div>
+
+    <!-- Balance Section -->
+    <div class="tab-section" id="balance">
+      <div class="card card-body mb-3">
+        <form id="balance-form" class="row g-2 align-items-end mb-3">
+          <input type="hidden" id="income-id">
+          <div class="col-sm-7 col-12">
+            <label for="income-input" class="form-label">Add Funds/Income</label>
+            <input type="number" step="0.01" min="0" id="income-input" class="form-control" placeholder="₹ Amount">
+          </div>
+          <div class="col-sm-5 col-12 d-grid">
+            <button type="submit" class="btn btn-success"><i class="bi bi-plus-circle"></i> <span id="income-form-btn-text">Add Income</span></button>
+          </div>
+        </form>
+        <div class="row text-center g-2 mb-3">
+          <div class="col-6 col-md-3"><span class="fw-semibold">Initial Balance:</span> ₹<span id="initial-balance">0.00</span></div>
+          <div class="col-6 col-md-3"><span class="fw-semibold">Income Added:</span> ₹<span id="total-income">0.00</span></div>
+          <div class="col-6 col-md-3"><span class="fw-semibold">Total Expenses:</span> ₹<span id="total-expenses">0.00</span></div>
+          <div class="col-6 col-md-3"><span class="fw-semibold">Current Balance:</span> ₹<span id="current-balance">0.00</span></div>
+        </div>
+        <div class="table-responsive mb-2">
+          <table class="table table-bordered align-middle" id="balance-table">
+            <thead class="table-light">
+              <tr>
+                <th><button class="btn btn-sm btn-outline-primary" disabled><i class="bi bi-calendar2-date"></i></button> Date</th>
+                <th><button class="btn btn-sm btn-outline-primary" disabled><i class="bi bi-currency-rupee"></i></button> Amount</th>
+                <th><button class="btn btn-sm btn-outline-primary" disabled><i class="bi bi-pencil-square"></i></button> Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Income entries will be rendered here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart Section -->
+    <div class="tab-section" id="chart">
+      <div class="chart-box mb-4" id="chartBox">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="fw-semibold">Category Breakdown</span>
+          <button id="chart-fullscreen-btn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrows-fullscreen"></i> Fullscreen</button>
+        </div>
+        <div id="chartContainer" style="width:100%;max-width:900px;margin:auto;">
+          <canvas id="categoryChart" style="width:100%;height:400px;max-height:600px;"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Section -->
+    <div class="tab-section" id="analytics">
+      <div class="card card-body mb-3">
+        <div class="analytics-title mb-2"><i class="bi bi-lightbulb"></i> Smart Suggestions & Insights</div>
+        <div class="analytics-suggestion" id="analytics-suggestion"></div>
+      </div>
+    </div>
+
+    <!-- Backup & Restore Section -->
+    <div class="tab-section" id="backup">
+      <div class="card card-body mb-3">
+        <h5 class="mb-3"><i class="bi bi-cloud-arrow-down"></i> Data Backup</h5>
+        <div class="d-flex gap-2 mb-2">
+          <button id="backup-btn" class="btn btn-success flex-fill"><i class="bi bi-download"></i> Download Backup</button>
+          <input type="file" id="restore-file" style="display:none;" />
+          <button id="restore-btn" class="btn btn-primary flex-fill"><i class="bi bi-upload"></i> Restore Data</button>
+        </div>
+        <div id="backup-info" class="text-muted small mt-2"></div>
+      </div>
+    </div>
+
+    <footer class="text-center text-muted py-3 small">All data is stored locally in your browser. Works offline!</footer>
+  </div>
+  <script>
+    // Tabs functionality
+    $(function(){
+      $('#mainTabs .nav-link').on('click', function(e){
+        e.preventDefault();
+        $('#mainTabs .nav-link').removeClass('active');
+        $(this).addClass('active');
+        $('.tab-section').removeClass('active');
+        $('#' + $(this).attr('data-tab')).addClass('active');
+        if($(this).attr('data-tab')==='chart') setTimeout(()=>{ if(categoryChart) categoryChart.resize(); }, 200);
+        if($(this).attr('data-tab')==='balance') setTimeout(updateBalance, 200);
+        if($(this).attr('data-tab')==='analytics') setTimeout(renderAnalytics, 100);
+      });
+    });
+
+    // Default categories
+    const defaultCategories = ["Food","Transport","Bills","Shopping","Entertainment","Health","Other"];
+    function loadCategories() {
+      let cats = localStorage.getItem('categories');
+      if (cats) return JSON.parse(cats);
+      localStorage.setItem('categories', JSON.stringify(defaultCategories));
+      return [...defaultCategories];
+    }
+    function saveCategories(cats) { localStorage.setItem('categories', JSON.stringify(cats)); }
+    function refreshCategorySelectors() {
+      const cats = loadCategories();
+      let opts = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+      $('#category').html('<option value="">Select Category</option>'+opts);
+      $('#filter-category').html('<option value="">All Categories</option>'+opts);
+      $('#budget-category').html('<option value="">Select Category</option>'+opts);
+      $('#delete-category').html('<option value="">Delete category</option>'+opts);
+    }
+    function saveExpenses(expenses) { localStorage.setItem('expenses', JSON.stringify(expenses)); }
+    function loadExpenses() { const data = localStorage.getItem('expenses'); return data ? JSON.parse(data) : []; }
+    function autoAddRecurring() {
+      let expenses = loadExpenses();
+      let today = new Date().toISOString().split('T')[0];
+      let lastRun = localStorage.getItem('recurringLastRun');
+      if(lastRun === today) return;
+      let recs = expenses.filter(e=>e.recurring);
+      let newAdded = false;
+      recs.forEach(e=>{
+        let eDate = new Date(e.date);
+        let nowMonth = new Date(today).getMonth(), nowYear = new Date(today).getFullYear();
+        let alreadyAdded = expenses.some(x=>x.recurring && x.category===e.category && x.description===e.description && new Date(x.date).getMonth()===nowMonth && new Date(x.date).getFullYear()===nowYear);
+        if(!alreadyAdded){
+          expenses.push({...e, id: Date.now().toString()+Math.random().toString(36).substr(2,5), date: today});
+          newAdded = true;
+        }
+      });
+      if(newAdded) saveExpenses(expenses);
+      localStorage.setItem('recurringLastRun', today);
+    }
+
+    // Balance/income utilities with entry list
+    function loadBalanceObj() {
+      let bal = localStorage.getItem('balanceData');
+      if (bal) return JSON.parse(bal);
+      let initial = prompt('Enter your initial balance/income (₹):', '0');
+      initial = parseFloat(initial) || 0;
+      let obj = { initial: initial, incomes: [], totalIncome: 0 };
+      saveBalanceObj(obj);
+      return obj;
+    }
+    function saveBalanceObj(obj) { localStorage.setItem('balanceData', JSON.stringify(obj)); }
+    function loadBudgets() { let b = localStorage.getItem('budgets'); return b ? JSON.parse(b) : {}; }
+    function saveBudgets(budgets) { localStorage.setItem('budgets', JSON.stringify(budgets)); }
+    let categoryChart;
+
+    // ----------- Expenses -----------
+    function renderExpenses() {
+      autoAddRecurring();
+      let expenses = loadExpenses();
+      const search = $('#search').val().toLowerCase();
+      const filterCat = $('#filter-category').val();
+      const startDate = $('#filter-date-start').val();
+      const endDate = $('#filter-date-end').val();
+      if (search) expenses = expenses.filter(e => e.description.toLowerCase().includes(search));
+      if (filterCat) expenses = expenses.filter(e => e.category === filterCat);
+      if (startDate) expenses = expenses.filter(e => e.date >= startDate);
+      if (endDate) expenses = expenses.filter(e => e.date <= endDate);
+      const tbody = $('#expenses-table tbody');
+      tbody.empty();
+      if (expenses.length === 0) {
+        tbody.append('<tr><td colspan="7" class="text-center text-muted">No expenses found.</td></tr>');
+        updateSummary([]);
+        updateChart([]);
+        updateBalance();
+        return;
+      }
+      expenses.sort((a,b)=>b.date.localeCompare(a.date));
+      expenses.forEach(expense => {
+        tbody.append(`
+          <tr>
+            <td>${expense.date}</td>
+            <td>₹${Number(expense.amount).toFixed(2)}</td>
+            <td>${expense.category}</td>
+            <td>${expense.description}</td>
+            <td>${expense.notes||''}</td>
+            <td>${expense.recurring?'<span class="text-success fw-bold">Yes</span>':''}</td>
+            <td>
+              <div class="btn-group btn-group-sm" role="group">
+                <button onclick="editExpense('${expense.id}')" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i></button>
+                <button onclick="deleteExpense('${expense.id}')" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
+              </div>
+            </td>
+          </tr>
+        `);
+      });
+      updateSummary(expenses);
+      updateChart(expenses);
+      updateBalance();
+      updateBudgetAlert(expenses);
+    }
+    function updateSummary(expenses) {
+      if (!expenses.length) {
+        $('#summary').html('No expenses yet.');
+        return;
+      }
+      const total = expenses.reduce((sum,e)=>sum+Number(e.amount),0);
+      const categoryTotals = {};
+      expenses.forEach(e=>{categoryTotals[e.category]=(categoryTotals[e.category]||0)+Number(e.amount);});
+      let summaryHtml = `<b>Total Spent:</b> ₹${total.toFixed(2)}<br>`;
+      summaryHtml += '<b>By Category:</b> ';
+      summaryHtml += Object.entries(categoryTotals).map(([cat, amt])=>`${cat}: ₹${amt.toFixed(2)}`).join(', ');
+      $('#summary').html(summaryHtml);
+    }
+    function updateChart(expenses) {
+      const cats = loadCategories();
+      const catTotals = cats.map(cat => expenses.filter(e=>e.category===cat).reduce((sum,e)=>sum+Number(e.amount),0));
+      const ctx = document.getElementById('categoryChart').getContext('2d');
+      if (categoryChart) categoryChart.destroy();
+      categoryChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: cats,
+          datasets: [{
+            data: catTotals,
+            backgroundColor: ['#FFB347','#5DADE2','#F1948A','#BB8FCE','#76D7C4','#F7DC6F','#AAB7B8','#85C1E9','#F4D03F','#D35400'],
+          }]
+        },
+        options: {
+          plugins: { legend: { position: 'bottom', labels: { font: { size: 13 } } } },
+          cutout: '65%',
+        }
+      });
+    }
+    function updateBudgetAlert(expenses) {
+      let budgets = loadBudgets();
+      let alertMsg = '';
+      let cats = Object.keys(budgets);
+      cats.forEach(cat=>{
+        let spent = expenses.filter(e=>e.category===cat).reduce((sum,e)=>sum+Number(e.amount),0);
+        if(spent>budgets[cat]) alertMsg += `⚠️ ${cat} budget exceeded! (Spent: ₹${spent.toFixed(2)} / Budget: ₹${budgets[cat].toFixed(2)})<br>`;
+        else if(spent>0.8*budgets[cat]) alertMsg += `⏳ ${cat} budget nearly reached (Spent: ₹${spent.toFixed(2)} / Budget: ₹${budgets[cat].toFixed(2)})<br>`;
+      });
+      $('#budget-alert').html(alertMsg);
+    }
+    function editExpense(id) {
+      const expenses = loadExpenses();
+      const expense = expenses.find(e=>e.id===id);
+      if (expense) {
+        $('#expense-id').val(expense.id);
+        $('#date').val(expense.date);
+        $('#amount').val(expense.amount);
+        $('#description').val(expense.description);
+        $('#category').val(expense.category);
+        $('#notes').val(expense.notes||'');
+        $('#recurring').prop('checked',!!expense.recurring);
+        $('#expense-form button').text('Update Expense');
+        $('html,body').animate({scrollTop: $('#expense-form').offset().top-20 },400);
+      }
+    }
+    function deleteExpense(id) {
+      if (!confirm('Delete this expense?')) return;
+      let expenses = loadExpenses();
+      expenses = expenses.filter(e=>e.id!==id);
+      saveExpenses(expenses);
+      renderExpenses();
+    }
+    function resetForm() {
+      $('#expense-id').val('');
+      $('#date').val('');
+      $('#amount').val('');
+      $('#description').val('');
+      $('#category').val('');
+      $('#notes').val('');
+      $('#recurring').prop('checked',false);
+      $('#expense-form button').text('Add Expense');
+    }
+    function exportCSV() {
+      const expenses = loadExpenses();
+      if (!expenses.length) { alert('No expenses to export.'); return; }
+      const header = ['Date','Amount','Category','Description','Notes','Recurring'];
+      const rows = expenses.map(e=>[e.date,e.amount,e.category,e.description,e.notes||'',e.recurring?'Yes':'']);
+      let csv = header.join(',')+'\n'+rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href=url;
+      a.download='expenses.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    function clearAllExpenses() {
+      if (!confirm('This will delete ALL expenses. Continue?')) return;
+      localStorage.removeItem('expenses');
+      renderExpenses();
+    }
+
+    // ----------- Balance Section Table -----------
+    function renderIncomeTable() {
+      let balanceObj = loadBalanceObj();
+      let tbody = $('#balance-table tbody');
+      tbody.empty();
+      if (!balanceObj.incomes.length) {
+        tbody.append('<tr><td colspan="3" class="text-center text-muted">No income entries.</td></tr>');
+        return;
+      }
+      balanceObj.incomes.forEach((entry, idx) => {
+        tbody.append(`
+          <tr>
+            <td>${entry.date || '-'}</td>
+            <td>₹${Number(entry.amount).toFixed(2)}</td>
+            <td>
+              <button class="btn btn-sm btn-outline-secondary me-1" onclick="editIncomeEntry('${entry.id}')"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-sm btn-outline-danger" onclick="deleteIncomeEntry('${entry.id}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>
+        `);
+      });
+    }
+    // Add/Edit Income Entry
+    $('#balance-form').on('submit', function(e){
+      e.preventDefault();
+      let amt = parseFloat($('#income-input').val()) || 0;
+      let id = $('#income-id').val();
+      let today = new Date().toISOString().split('T')[0];
+      let balanceObj = loadBalanceObj();
+      if (amt <= 0) { alert('Enter a valid income amount.'); return; }
+      if (id) {
+        balanceObj.incomes = balanceObj.incomes.map(entry =>
+          entry.id === id ? { ...entry, amount: amt } : entry
+        );
+        $('#income-form-btn-text').text("Add Income");
+      } else {
+        balanceObj.incomes.push({ id: Date.now().toString()+Math.random().toString(36).substr(2,5), amount: amt, date: today });
+      }
+      balanceObj.totalIncome = balanceObj.incomes.reduce((sum, i) => sum + Number(i.amount), 0);
+      saveBalanceObj(balanceObj);
+      $('#income-id').val('');
+      $('#income-input').val('');
+      renderIncomeTable();
+      updateBalance();
+    });
+    // Edit Income Entry
+    window.editIncomeEntry = function(id) {
+      let balanceObj = loadBalanceObj();
+      let entry = balanceObj.incomes.find(e => e.id === id);
+      if (entry) {
+        $('#income-id').val(entry.id);
+        $('#income-input').val(entry.amount);
+        $('#income-form-btn-text').text("Update Income");
+      }
+    };
+    // Delete Income Entry
+    window.deleteIncomeEntry = function(id) {
+      if (!confirm('Delete this income entry?')) return;
+      let balanceObj = loadBalanceObj();
+      balanceObj.incomes = balanceObj.incomes.filter(e => e.id !== id);
+      balanceObj.totalIncome = balanceObj.incomes.reduce((sum, i) => sum + Number(i.amount), 0);
+      saveBalanceObj(balanceObj);
+      $('#income-id').val('');
+      $('#income-input').val('');
+      $('#income-form-btn-text').text("Add Income");
+      renderIncomeTable();
+      updateBalance();
+    };
+
+    // Update balance summary and income table on load
+    function updateBalance() {
+      let balanceObj = loadBalanceObj();
+      let expenses = loadExpenses();
+      let totalExpenses = expenses.reduce((sum,e)=>sum+Number(e.amount),0);
+      let totalIncome = balanceObj.incomes.reduce((sum,i)=>sum+Number(i.amount),0);
+      let currentBalance = balanceObj.initial + totalIncome - totalExpenses;
+      $('#initial-balance').text(balanceObj.initial.toFixed(2));
+      $('#total-income').text(totalIncome.toFixed(2));
+      $('#total-expenses').text(totalExpenses.toFixed(2));
+      $('#current-balance').text(currentBalance.toFixed(2));
+      renderIncomeTable();
+    }
+
+    // ----------- Budget -----------
+    function refreshBudgetList() {
+      let budgets = loadBudgets();
+      let html = '';
+      Object.entries(budgets).forEach(([cat, amt])=>{
+        html += `<div class="col-6 col-md-4"><span class="fw-bold">${cat}:</span> ₹${amt.toFixed(2)}</div>`;
+      });
+      $('#budget-list').html(html);
+    }
+
+    // ----------- Chart Fullscreen -----------
+    $('#chart-fullscreen-btn').on('click', function(){
+      $('#chartBox').toggleClass('fullscreen-chart');
+      if ($('#chartBox').hasClass('fullscreen-chart')) {
+        $(this).html('<i class="bi bi-x-lg"></i> Exit Fullscreen');
+      } else {
+        $(this).html('<i class="bi bi-arrows-fullscreen"></i> Fullscreen');
+      }
+      setTimeout(()=>{ if(categoryChart) categoryChart.resize(); }, 300);
+    });
+
+    // ----------- Analytics Section -----------
+    function renderAnalytics() {
+      let expenses = loadExpenses();
+      let cats = loadCategories();
+      let budgets = loadBudgets();
+      let balanceObj = loadBalanceObj();
+      let analytics = [];
+
+      // Top spending category
+      let catTotals = {};
+      expenses.forEach(e=>{catTotals[e.category]=(catTotals[e.category]||0)+Number(e.amount);});
+      let topCat = Object.entries(catTotals).sort((a,b)=>b[1]-a[1])[0];
+      if(topCat) analytics.push(`<b><i class="bi bi-bar-chart"></i> Highest spending:</b> ${topCat[0]} (₹${topCat[1].toFixed(2)})`);
+
+      // Suggest budget increase if category often exceeds budget
+      Object.entries(budgets).forEach(([cat, limit])=>{
+        let spent = catTotals[cat]||0;
+        if(spent>limit) analytics.push(`<b><i class="bi bi-exclamation-triangle"></i> Consider increasing budget for ${cat}:</b> You exceeded by ₹${(spent-limit).toFixed(2)}.`);
+        else if(spent>0.9*limit) analytics.push(`<b><i class="bi bi-graph-up"></i> ${cat} is close to budget:</b> Spent ₹${spent.toFixed(2)} / Budget ₹${limit.toFixed(2)}.`);
+      });
+
+      // Detect recurring high expenses
+      let recurring = expenses.filter(e=>e.recurring);
+      if(recurring.length>=2) {
+        let recCats = {};
+        recurring.forEach(e=>{recCats[e.category]=(recCats[e.category]||0)+1;});
+        Object.entries(recCats).forEach(([cat,count])=>{
+          if(count>1) analytics.push(`<b><i class="bi bi-arrow-repeat"></i> Recurring:</b> ${count} monthly expenses in ${cat}. Consider reviewing subscriptions.`);
+        });
+      }
+
+      // Suggest saving if balance is high
+      let totalIncome = balanceObj.incomes.reduce((sum, i) => sum + Number(i.amount), 0);
+      let totalExpenses = expenses.reduce((sum,e)=>sum+Number(e.amount),0);
+      let currBal = balanceObj.initial + totalIncome - totalExpenses;
+      if(currBal > 0.5*totalIncome && totalIncome>0) {
+        analytics.push(`<b><i class="bi bi-piggy-bank"></i> Good savings:</b> Your current balance is ${Math.round(currBal/totalIncome*100)}% of your income.`);
+      }
+
+      // Suggest reducing top 2 categories
+      let sortedCats = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+      if(sortedCats.length>=2) {
+        analytics.push(`<b><i class="bi bi-lightbulb"></i> Tip:</b> Try reducing spending in "${sortedCats[0][0]}" and "${sortedCats[1][0]}".`);
+      }
+
+      // If no data
+      if(analytics.length===0) analytics.push('No data for suggestions yet. Start adding expenses and budgets!');
+
+      $('#analytics-suggestion').html(analytics.map(a=>`<div class="mb-2">${a}</div>`).join(''));
+    }
+
+    // ----------- Backup & Restore Section -----------
+    $('#backup-btn').on('click', function(){
+      let data = {
+        expenses: loadExpenses(),
+        categories: loadCategories(),
+        budgets: loadBudgets(),
+        balanceData: loadBalanceObj()
+      };
+      let blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+      let url = URL.createObjectURL(blob);
+      let a = document.createElement('a');
+      a.href = url;
+      a.download = "expense_manager_backup.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      $('#backup-info').text("Backup downloaded successfully.");
+    });
+
+    $('#restore-btn').on('click', function(){
+      $('#restore-file').click();
+    });
+
+    $('#restore-file').on('change', function(){
+      let file = this.files[0];
+      if(!file) return;
+      let reader = new FileReader();
+      reader.onload = function(e){
+        try {
+          let data = JSON.parse(e.target.result);
+          if(data.expenses && Array.isArray(data.expenses)) localStorage.setItem('expenses',JSON.stringify(data.expenses));
+          if(data.categories && Array.isArray(data.categories)) localStorage.setItem('categories',JSON.stringify(data.categories));
+          if(data.budgets && typeof data.budgets==='object') localStorage.setItem('budgets',JSON.stringify(data.budgets));
+          if(data.balanceData && typeof data.balanceData==='object') localStorage.setItem('balanceData',JSON.stringify(data.balanceData));
+          $('#backup-info').text("Restore successful! Reloading data...");
+          setTimeout(()=>{ location.reload(); },1000);
+        } catch(err) {
+          $('#backup-info').text("Restore failed: Invalid backup file.");
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // ----------- App Init & Events -----------
+    $(function(){
+      loadBalanceObj();
+      refreshCategorySelectors();
+      renderExpenses();
+      refreshBudgetList();
+      updateBalance();
+
+      $('#expense-form').on('submit', function(e){
+        e.preventDefault();
+        const id = $('#expense-id').val();
+        const date = $('#date').val();
+        const amount = $('#amount').val();
+        const description = $('#description').val().trim();
+        const category = $('#category').val();
+        const notes = $('#notes').val();
+        const recurring = $('#recurring').prop('checked');
+        if (!date || !amount || !description || !category) {
+          alert('Please fill all fields.');
+          return;
+        }
+        let expenses = loadExpenses();
+        if (id) {
+          expenses = expenses.map(e=>e.id===id?{...e,date,amount,description,category,notes,recurring}:e);
+        } else {
+          expenses.push({
+            id: Date.now().toString()+Math.random().toString(36).substr(2,5),
+            date, amount, description, category, notes, recurring
+          });
+        }
+        saveExpenses(expenses);
+        resetForm();
+        renderExpenses();
+      });
+      $('#search, #filter-category, #filter-date-start, #filter-date-end').on('input change', function(){ renderExpenses(); });
+      $('#clear-filter').on('click', function(){
+        $('#search').val('');
+        $('#filter-category').val('');
+        $('#filter-date-start').val('');
+        $('#filter-date-end').val('');
+        renderExpenses();
+      });
+      $('#export-btn').on('click', exportCSV);
+      $('#clear-btn').on('click', clearAllExpenses);
+      $('#expenses-table').on('click', 'button', function(){ $(this).blur(); });
+      $('#expense-form').on('reset', resetForm);
+
+      $('#budget-form').on('submit', function(e){
+        e.preventDefault();
+        let cat = $('#budget-category').val();
+        let amt = parseFloat($('#budget-amount').val())||0;
+        if(!cat||amt<=0){ alert('Select category and enter a valid amount.'); return; }
+        let budgets = loadBudgets();
+        budgets[cat] = amt;
+        saveBudgets(budgets);
+        $('#budget-amount').val('');
+        $('#budget-category').val('');
+        refreshBudgetList();
+        renderExpenses();
+      });
+
+      $('#add-cat-btn').on('click', function(){
+        let cat = $('#new-category').val().trim();
+        if(!cat){ alert('Enter category name.'); return; }
+        let cats = loadCategories();
+        if(cats.includes(cat)){ alert('Category exists.'); return; }
+        cats.push(cat);
+        saveCategories(cats);
+        $('#new-category').val('');
+        refreshCategorySelectors();
+      });
+      $('#del-cat-btn').on('click', function(){
+        let cat = $('#delete-category').val();
+        if(!cat){ alert('Select category to delete.'); return; }
+        let cats = loadCategories();
+        cats = cats.filter(c=>c!==cat);
+        saveCategories(cats);
+        refreshCategorySelectors();
+        renderExpenses();
+      });
+      $('#toggle-dark').on('click', function(){
+        $('body').toggleClass('dark-mode');
+        $(this).html($('body').hasClass('dark-mode') ? '<i class="bi bi-sun-fill"></i>' : '<i class="bi bi-moon-stars-fill"></i>');
+      });
+    });
+    window.editExpense = editExpense;
+    window.deleteExpense = deleteExpense;
+  </script>
+</body>
+</html>
